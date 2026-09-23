@@ -1,2 +1,1338 @@
 # EDR-System-1-AI-model
 A system -1 inspired AI model for quick decisions for endpoint detection response. 
+# AI-EDR Architecture
+
+**Status:** Initial Architecture
+**Version:** 0.1
+**Scope:** Local-first AI-assisted Endpoint Detection and Response research platform
+**Primary development target:** Windows 11 endpoint
+**Training target:** Local development machine
+**Future analysis platform:** Linux/Ubuntu
+**Primary design principle:** Fast, structured endpoint decisions first; deeper investigation second.
+
+---
+
+## 1. Purpose
+
+This project is a research-oriented Endpoint Detection and Response (EDR) platform that combines conventional endpoint telemetry, deterministic detection logic, machine learning, and a lightweight **System-1-inspired decision model**.
+
+The system is intended to answer questions such as:
+
+* Is this endpoint behaviour suspicious?
+* What type of behaviour does it represent?
+* How severe is the event?
+* Should the event be escalated for deeper investigation?
+* How confident is the system in each decision?
+
+The architecture deliberately separates:
+
+1. **Telemetry collection**
+2. **Event normalization**
+3. **Feature extraction**
+4. **Fast machine-learning decisions**
+5. **Decision policy**
+6. **Deep investigation**
+7. **Human review**
+
+The first implementation will run entirely in a local laboratory environment.
+
+---
+
+# 2. Core Principles
+
+## 2.1 Local-first
+
+The initial system must be capable of operating without cloud AI services.
+
+Training, evaluation, inference, telemetry storage, and experimentation should be possible on locally controlled hardware.
+
+Cloud infrastructure may be introduced later, but must not be an architectural dependency.
+
+---
+
+## 2.2 Detection is not the same as reasoning
+
+The lightweight model is not intended to replace a large reasoning model.
+
+The architecture separates:
+
+```text
+Fast detection and classification
+                ↓
+      Deeper investigation
+                ↓
+          Human decision
+```
+
+The fast layer handles volume.
+
+The deeper layer handles ambiguity and correlation.
+
+The human remains responsible for consequential actions during the research phase.
+
+---
+
+## 2.3 Structured decisions
+
+The model should primarily produce machine-consumable outputs rather than free-form explanations.
+
+Example:
+
+```json
+{
+  "malicious_probability": 0.94,
+  "suspicious_probability": 0.98,
+  "severity": 8.1,
+  "technique": "T1059.001",
+  "escalation_probability": 0.96
+}
+```
+
+Natural-language explanation is a downstream function.
+
+---
+
+## 2.4 Evidence over intuition
+
+A high probability is not itself evidence of malicious activity.
+
+The system must preserve the telemetry and feature values that led to a decision.
+
+Every decision should be traceable to:
+
+```text
+raw event
+    ↓
+normalized event
+    ↓
+features
+    ↓
+model output
+    ↓
+decision policy
+    ↓
+action
+```
+
+---
+
+## 2.5 Conservative automation
+
+Automatic containment should not be enabled by default.
+
+The initial system should prefer:
+
+```text
+detect → score → investigate → confirm → respond
+```
+
+rather than:
+
+```text
+detect → immediately destroy/isolate
+```
+
+Automation can become more aggressive only after the model has demonstrated acceptable false-positive and false-negative behaviour in controlled testing.
+
+---
+
+# 3. High-Level Architecture
+
+```text
+                         ┌───────────────────────┐
+                         │    Windows 11 VM      │
+                         │    Test Endpoint      │
+                         │                       │
+                         │  EDR Sensor           │
+                         │  Windows Events       │
+                         │  Sysmon / ETW         │
+                         └───────────┬───────────┘
+                                     │
+                               Endpoint events
+                                     │
+                                     ▼
+                         ┌───────────────────────┐
+                         │   Event Collector     │
+                         │                       │
+                         │ Ingest                │
+                         │ Validate              │
+                         │ Timestamp             │
+                         │ Queue                  │
+                         └───────────┬───────────┘
+                                     │
+                                     ▼
+                         ┌───────────────────────┐
+                         │   Event Normalizer    │
+                         │                       │
+                         │ Unified event schema  │
+                         └───────────┬───────────┘
+                                     │
+                                     ▼
+                         ┌───────────────────────┐
+                         │    Feature Engine     │
+                         │                       │
+                         │ Context               │
+                         │ Behaviour             │
+                         │ Relationships         │
+                         │ Frequency             │
+                         │ Reputation             │
+                         └───────────┬───────────┘
+                                     │
+                                     ▼
+                         ┌───────────────────────┐
+                         │ System-1 Decision     │
+                         │ Model                 │
+                         │                       │
+                         │ Classification        │
+                         │ Risk                   │
+                         │ Technique             │
+                         │ Escalation            │
+                         └───────────┬───────────┘
+                                     │
+                                     ▼
+                         ┌───────────────────────┐
+                         │   Decision Engine     │
+                         │                       │
+                         │ Thresholds            │
+                         │ Policy                │
+                         │ Correlation            │
+                         └───────┬───────┬───────┘
+                                 │       │
+                         low risk│       │high/uncertain
+                                 │       │
+                                 ▼       ▼
+                              Record   Investigation
+                                          │
+                                          ▼
+                               ┌──────────────────┐
+                               │ System-2 Layer   │
+                               │                  │
+                               │ Correlation      │
+                               │ Context          │
+                               │ Reasoning        │
+                               └────────┬─────────┘
+                                        │
+                                        ▼
+                                  Analyst Review
+```
+
+---
+
+# 4. Major Components
+
+## 4.1 Endpoint Sensor
+
+The sensor runs on the monitored endpoint.
+
+### Initial platform
+
+**Windows 11**
+
+The first sensor should focus on process and process-related telemetry.
+
+Initial telemetry sources may include:
+
+* Windows Event Logs
+* Sysmon
+* process creation
+* process termination
+* command-line information
+* parent/child relationships
+* executable paths
+* user context
+* integrity level
+* digital-signature information
+* network connection events
+* file activity
+* registry activity
+* service activity
+* scheduled-task activity
+* PowerShell activity
+
+ETW-based collection may be introduced later as a lower-level telemetry source.
+
+### Sensor responsibility
+
+The sensor should:
+
+```text
+observe
+    ↓
+capture
+    ↓
+timestamp
+    ↓
+identify endpoint
+    ↓
+send event
+```
+
+It should **not** contain the ML training logic.
+
+---
+
+# 5. Event Collection
+
+The collector provides a controlled interface between endpoint telemetry and the analytical pipeline.
+
+## Responsibilities
+
+* receive events
+* validate schema
+* reject malformed events
+* assign ingestion metadata
+* buffer events
+* preserve source timestamps
+* provide delivery guarantees where practical
+
+Example:
+
+```text
+Sensor
+  ↓
+JSON event
+  ↓
+Collector
+  ↓
+Validated event
+```
+
+The collector should preserve the original event wherever possible.
+
+---
+
+# 6. Unified Event Schema
+
+Different telemetry providers should eventually map into one internal schema.
+
+Example:
+
+```json
+{
+  "event_id": "uuid",
+  "timestamp": "2026-09-23T08:00:00Z",
+  "host_id": "host-001",
+  "event_type": "process_create",
+
+  "process": {
+    "pid": 4212,
+    "parent_pid": 1180,
+    "name": "powershell.exe",
+    "path": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+    "command_line": "powershell.exe -Command Get-Process",
+    "sha256": "...",
+    "signed": true,
+    "publisher": "Microsoft Corporation"
+  },
+
+  "user": {
+    "name": "user",
+    "integrity_level": "medium"
+  },
+
+  "network": [],
+  "file": [],
+  "registry": [],
+
+  "source": {
+    "provider": "sysmon",
+    "event_id": 1
+  }
+}
+```
+
+The schema must support additional telemetry without breaking existing consumers.
+
+---
+
+# 7. Event Normalization
+
+Normalization converts provider-specific events into the project's canonical representation.
+
+Example:
+
+```text
+Sysmon Event 1
+       ↓
+Windows process event
+       ↓
+Canonical process_create event
+```
+
+Normalization should produce consistent:
+
+* field names
+* data types
+* timestamps
+* identifiers
+* enumeration values
+* missing-value handling
+
+---
+
+# 8. Feature Engine
+
+The ML model should not consume arbitrary raw event text as its primary representation.
+
+A feature engine converts endpoint behaviour into structured features.
+
+## 8.1 Static features
+
+Examples:
+
+```text
+process name
+file extension
+file path
+signature status
+publisher
+parent process
+user
+integrity level
+```
+
+## 8.2 Behavioural features
+
+Examples:
+
+```text
+number of child processes
+number of network connections
+execution frequency
+rare process relationship
+first-seen executable
+unusual parent/child relationship
+recent privilege change
+recent persistence activity
+```
+
+## 8.3 Temporal features
+
+Examples:
+
+```text
+events per minute
+time since process creation
+time since previous execution
+burst activity
+sequence length
+time-of-day characteristics
+```
+
+## 8.4 Relationship features
+
+Examples:
+
+```text
+grandparent → parent → child
+process → file
+process → registry key
+process → destination
+user → process
+host → process
+```
+
+These relationships become increasingly important as the system moves from event classification to behavioural detection.
+
+---
+
+# 9. Initial Model Strategy
+
+The project should not begin by attempting to reproduce a proprietary System-1 model.
+
+Instead, establish a measurable progression.
+
+```text
+Rule-based baseline
+        ↓
+Logistic Regression
+        ↓
+Tree-based model
+        ↓
+Small neural network
+        ↓
+Multi-output decision model
+```
+
+This gives the project measurable baselines.
+
+---
+
+# 10. System-1-Inspired Decision Model
+
+The model is intended to be:
+
+* small
+* fast
+* deterministic in interface
+* structured in output
+* probability-aware
+* suitable for local inference
+
+Conceptual architecture:
+
+```text
+                  Feature Vector
+                        │
+                        ▼
+                ┌──────────────┐
+                │ Encoder      │
+                │ / Projection │
+                └──────┬───────┘
+                       │
+                 Shared representation
+                       │
+          ┌────────────┼─────────────┐
+          │            │             │
+          ▼            ▼             ▼
+     Classification  Technique    Severity
+          │            │             │
+          └────────────┼─────────────┘
+                       │
+                       ▼
+                  Escalation
+```
+
+The model should eventually support multiple decisions from the same event representation.
+
+---
+
+# 11. Model Outputs
+
+The initial outputs should include:
+
+## 11.1 Classification
+
+```text
+benign
+suspicious
+malicious
+```
+
+with probabilities.
+
+Example:
+
+```json
+{
+  "benign": 0.03,
+  "suspicious": 0.11,
+  "malicious": 0.86
+}
+```
+
+---
+
+## 11.2 Behaviour / technique
+
+The model may identify a likely behaviour category.
+
+Examples:
+
+```text
+command_interpreter
+persistence
+credential_access
+defence_evasion
+lateral_movement
+execution
+```
+
+MITRE ATT&CK identifiers may be introduced as the dataset matures.
+
+---
+
+## 11.3 Severity
+
+Example:
+
+```text
+severity = 0.0 - 10.0
+```
+
+The scoring policy must be explicitly defined.
+
+---
+
+## 11.4 Escalation
+
+The model estimates whether deeper investigation is justified.
+
+```json
+{
+  "escalate_probability": 0.92
+}
+```
+
+The decision engine, not the model itself, should apply the operational threshold.
+
+---
+
+# 12. Decision Engine
+
+The decision engine converts model output into an operational decision.
+
+Example:
+
+```text
+Model
+ |
+ | malicious = 0.91
+ | escalate = 0.95
+ | severity = 7.8
+ v
+Decision Engine
+ |
+ +-- below threshold → record
+ |
+ +-- investigation threshold → investigate
+ |
+ +-- critical threshold → alert
+```
+
+The decision engine should be independent from the model.
+
+This allows thresholds to change without retraining the model.
+
+---
+
+# 13. System-2 Investigation Layer
+
+The deeper investigation layer is deliberately separated from the fast model.
+
+It should receive only events or cases that warrant additional analysis.
+
+Possible inputs:
+
+```text
+initial event
+process tree
+related events
+host context
+user context
+network context
+historical activity
+model outputs
+rule detections
+```
+
+The layer may eventually use:
+
+* a larger ML model
+* an LLM
+* graph analysis
+* deterministic correlation
+* threat-intelligence enrichment
+
+Its purpose is not raw event classification.
+
+Its purpose is:
+
+```text
+"What is happening here?"
+```
+
+---
+
+# 14. Case Construction
+
+Individual events eventually need to become investigations.
+
+Example:
+
+```text
+Event 001
+powershell.exe
+
+        +
+Event 002
+encoded command
+
+        +
+Event 003
+new network connection
+
+        +
+Event 004
+scheduled task creation
+```
+
+becomes:
+
+```text
+CASE-00042
+Potential execution + persistence chain
+```
+
+This is more useful to analysts than four disconnected alerts.
+
+---
+
+# 15. Data Storage
+
+The initial system should preserve several classes of data.
+
+```text
+Raw telemetry
+Normalized events
+Features
+Labels
+Model predictions
+Decisions
+Investigations
+Ground truth
+Experiment metadata
+```
+
+Suggested initial storage:
+
+```text
+local files
+    +
+SQLite / PostgreSQL
+```
+
+A relational database becomes more useful as the dataset grows.
+
+---
+
+# 16. Training Pipeline
+
+Training is performed on the development machine.
+
+```text
+Collected telemetry
+        ↓
+Data validation
+        ↓
+Labeling
+        ↓
+Train/validation/test split
+        ↓
+Feature generation
+        ↓
+Model training
+        ↓
+Evaluation
+        ↓
+Calibration
+        ↓
+Model export
+```
+
+Training data must be separated from evaluation data.
+
+No test information should leak into training.
+
+---
+
+# 17. Dataset Design
+
+The dataset should contain both malicious/simulated-malicious and benign behaviour.
+
+Example:
+
+```text
+dataset/
+├── raw/
+├── normalized/
+├── features/
+├── labels/
+├── train/
+├── validation/
+└── test/
+```
+
+The project should retain the source and provenance of each example.
+
+Each training sample should ideally contain:
+
+```text
+event
+features
+label
+source
+timestamp
+scenario
+ground_truth
+```
+
+---
+
+# 18. Controlled Laboratory Data
+
+The initial malicious dataset should be generated in an isolated test environment.
+
+The lab can contain:
+
+```text
+Windows 11 VM
+    ↓
+EDR sensor
+
+Optional:
+Ubuntu analysis VM
+Kali testing VM
+```
+
+Malicious behaviour should be simulated or generated only in the controlled laboratory.
+
+The resulting telemetry is then labeled with known ground truth.
+
+---
+
+# 19. Model Evaluation
+
+Accuracy alone is insufficient.
+
+The evaluation framework should track:
+
+```text
+precision
+recall
+F1
+PR-AUC
+ROC-AUC
+false-positive rate
+false-negative rate
+latency
+throughput
+memory usage
+CPU usage
+```
+
+For probability-producing models, also measure calibration.
+
+Possible metrics include:
+
+```text
+Brier score
+Expected Calibration Error
+reliability diagrams
+```
+
+The goal is not merely:
+
+> "Does the model classify correctly?"
+
+It is:
+
+> "Can the model produce useful, trustworthy probabilities at endpoint speed?"
+
+---
+
+# 20. Inference Requirements
+
+The deployed System-1 model should eventually be capable of local inference.
+
+Desired properties:
+
+```text
+low latency
+low memory footprint
+low CPU overhead
+no cloud dependency
+deterministic input/output schema
+versioned model
+rollback capability
+```
+
+The model should not materially interfere with endpoint performance.
+
+---
+
+# 21. Model Export
+
+The training environment and endpoint inference environment should remain separate.
+
+Conceptually:
+
+```text
+PyTorch / training framework
+             ↓
+        trained model
+             ↓
+        ONNX export
+             ↓
+      ONNX Runtime
+             ↓
+       EDR endpoint
+```
+
+This allows the training stack to remain relatively heavyweight while the endpoint runtime remains lightweight.
+
+---
+
+# 22. Model Versioning
+
+Every deployed model must have a unique version.
+
+Example:
+
+```text
+edr-model-0.1.0
+edr-model-0.2.0
+edr-model-0.3.0
+```
+
+Each model record should reference:
+
+```text
+training dataset version
+feature schema version
+model architecture
+training configuration
+evaluation metrics
+calibration metrics
+creation timestamp
+```
+
+---
+
+# 23. Feedback Loop
+
+Confirmed investigations should eventually become future training data.
+
+```text
+Detection
+   ↓
+Investigation
+   ↓
+Analyst verdict
+   ↓
+Ground truth
+   ↓
+Dataset
+   ↓
+Retraining
+```
+
+This should be controlled.
+
+Analyst decisions should not automatically retrain production models.
+
+A model promotion process is required.
+
+---
+
+# 24. Model Promotion
+
+Proposed lifecycle:
+
+```text
+experimental
+     ↓
+validated
+     ↓
+candidate
+     ↓
+lab deployment
+     ↓
+approved
+     ↓
+production
+```
+
+A model may only move forward when predefined evaluation criteria are satisfied.
+
+---
+
+# 25. Security Boundaries
+
+The EDR itself is security-sensitive.
+
+Important boundaries include:
+
+```text
+Endpoint sensor
+        │
+        │ authenticated telemetry
+        ▼
+Collector
+        │
+        ▼
+Analysis environment
+```
+
+The collector should never blindly trust telemetry.
+
+The platform must assume:
+
+* events may be malformed
+* event fields may be missing
+* timestamps may be manipulated
+* processes may attempt to evade collection
+* telemetry may be incomplete
+
+---
+
+# 26. Failure Modes
+
+The architecture must define what happens when AI fails.
+
+Examples:
+
+### Model unavailable
+
+Fallback:
+
+```text
+AI unavailable
+    ↓
+rules + telemetry continue
+```
+
+### Model returns invalid output
+
+Fallback:
+
+```text
+invalid prediction
+    ↓
+discard prediction
+    ↓
+log error
+    ↓
+continue with deterministic detection
+```
+
+### Confidence is low
+
+Fallback:
+
+```text
+uncertain
+    ↓
+deeper investigation
+```
+
+The system should fail toward **visibility**, not silent blindness.
+
+---
+
+# 27. Initial Laboratory Topology
+
+The first practical laboratory should be:
+
+```text
+                  PHYSICAL MACHINE
+                       │
+          ┌────────────┴────────────┐
+          │                         │
+          ▼                         ▼
+   Windows 11 VM              Development OS
+   EDR endpoint               ML development
+          │                         │
+          │                         │
+          └──────────┬──────────────┘
+                     │
+               local dataset
+```
+
+Optional later expansion:
+
+```text
+                 Host
+                  │
+       ┌──────────┼──────────┐
+       ▼          ▼          ▼
+   Windows      Ubuntu      Kali
+   endpoint     analysis    testing
+```
+
+The environments should be isolated appropriately.
+
+---
+
+# 28. Recommended Project Structure
+
+```text
+ai-edr/
+│
+├── docs/
+│   ├── ARCHITECTURE.md
+│   ├── EVENT-SCHEMA.md
+│   ├── DATASET.md
+│   ├── MODEL-DESIGN.md
+│   ├── DETECTION.md
+│   └── THREAT-MODEL.md
+│
+├── sensor/
+│
+├── collector/
+│
+├── normalizer/
+│
+├── features/
+│
+├── model/
+│   ├── training/
+│   ├── evaluation/
+│   ├── calibration/
+│   └── inference/
+│
+├── decision-engine/
+│
+├── investigation/
+│
+├── storage/
+│
+├── tests/
+│
+├── datasets/
+│
+├── models/
+│
+└── scripts/
+```
+
+---
+
+# 29. Initial Technology Direction
+
+Technology choices are intentionally conservative.
+
+## Endpoint
+
+```text
+Windows 11
+Sysmon
+Windows Event Logs
+PowerShell
+Python or native agent implementation
+```
+
+A native Windows implementation may eventually use a compiled language such as C++ or Rust for performance and deployment.
+
+Python is acceptable for the first research sensor.
+
+---
+
+## Machine Learning
+
+Initial experimentation:
+
+```text
+Python
+NumPy
+pandas
+scikit-learn
+XGBoost
+PyTorch
+```
+
+Inference:
+
+```text
+ONNX
+ONNX Runtime
+```
+
+---
+
+## Storage
+
+Initial:
+
+```text
+SQLite
+```
+
+Later:
+
+```text
+PostgreSQL
+```
+
+---
+
+## Experiment tracking
+
+Initially:
+
+```text
+Git
+CSV / Parquet
+JSON
+```
+
+Later:
+
+```text
+MLflow or an equivalent experiment-tracking system
+```
+
+No experiment-tracking platform is required for the first prototype.
+
+---
+
+# 30. Development Sequence
+
+The implementation sequence should be:
+
+```text
+01. Define event schema
+          ↓
+02. Build Windows telemetry collector
+          ↓
+03. Build normalized event pipeline
+          ↓
+04. Collect benign laboratory telemetry
+          ↓
+05. Create controlled malicious/simulated scenarios
+          ↓
+06. Label and validate dataset
+          ↓
+07. Build rule-based baseline
+          ↓
+08. Train classical ML baseline
+          ↓
+09. Build lightweight neural model
+          ↓
+10. Add multiple decision heads
+          ↓
+11. Calibrate probabilities
+          ↓
+12. Benchmark inference latency
+          ↓
+13. Export model
+          ↓
+14. Integrate local inference into sensor
+          ↓
+15. Build decision engine
+          ↓
+16. Build investigation/correlation layer
+          ↓
+17. Evaluate end-to-end EDR
+```
+
+---
+
+# 31. First Milestone
+
+The first milestone is **not** a fully autonomous EDR.
+
+It is:
+
+> A Windows endpoint event enters the system and produces a fast, structured, locally generated security decision whose probability can be evaluated against known ground truth.
+
+Example:
+
+```text
+Windows process event
+        ↓
+Normalization
+        ↓
+Feature extraction
+        ↓
+Local model
+        ↓
+{
+  "malicious_probability": 0.91,
+  "severity": 7.4,
+  "escalate_probability": 0.88
+}
+```
+
+That is the foundation.
+
+---
+
+# 32. Architectural Success Criteria
+
+The initial architecture is successful when it demonstrates:
+
+### Detection
+
+The system can distinguish selected benign and malicious/simulated behaviours.
+
+### Speed
+
+Local inference is fast enough to support endpoint telemetry processing.
+
+### Calibration
+
+Model probabilities correspond reasonably to observed outcomes.
+
+### Explainability through evidence
+
+Each model decision can be traced back to the event and features used.
+
+### Modularity
+
+The model can be replaced without rewriting the sensor.
+
+### Offline capability
+
+Core detection and inference do not require cloud AI.
+
+### Extensibility
+
+The architecture can later incorporate:
+
+```text
+additional telemetry
+additional models
+additional endpoints
+graph analysis
+System-2 reasoning
+threat intelligence
+automated response
+```
+
+without redesigning the entire platform.
+
+---
+
+# 33. Non-Goals for Version 0.1
+
+The initial version will **not** attempt to:
+
+* replace commercial EDR platforms
+* guarantee detection of all malware
+* perform unrestricted autonomous response
+* train a giant foundation model
+* reproduce a proprietary commercial model
+* rely on an external AI API
+* solve endpoint protection across every operating system
+* provide perfect attribution of attacker identity
+
+The project should first prove the architecture at a small and measurable scale.
+
+---
+
+# 34. Guiding Architecture
+
+The fundamental design is:
+
+```text
+              OBSERVE
+                 │
+                 ▼
+              NORMALIZE
+                 │
+                 ▼
+              REPRESENT
+                 │
+                 ▼
+           FAST DECISION
+          /       │       \
+       benign   uncertain  high-risk
+          │        │          │
+          ▼        ▼          ▼
+        record   investigate  investigate
+                    │
+                    ▼
+             DEEP ANALYSIS
+                    │
+                    ▼
+              HUMAN REVIEW
+                    │
+                    ▼
+              GROUND TRUTH
+                    │
+                    ▼
+              FUTURE DATA
+```
+
+The System-1-inspired model is therefore **one component in an evidence-driven EDR architecture**, not the EDR itself.
