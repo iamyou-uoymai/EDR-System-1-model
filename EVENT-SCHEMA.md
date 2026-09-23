@@ -1,230 +1,431 @@
 # EVENT-SCHEMA.md
 
 **Project:** AI-EDR
-**Document:** Endpoint Event Schema
-**Version:** 0.1
-**Status:** Initial
-**Primary benchmark:** ADFA-WD
+**Document:** Endpoint Event and Trace Schema
+**Version:** 0.2
+**Status:** Initial implementation specification
+**Primary benchmark:** ADFA-WD Full Process Traces
 **Secondary benchmark:** ADFA-WD:SAA
-**Primary deployment target:** Windows
-**Schema strategy:** Raw-source preservation + normalized event representation
+**Target platform:** Windows
+**Schema strategy:** Source-specific adapters → canonical representation → features → model
 
 ---
 
 # 1. Purpose
 
-This document defines the event and telemetry schema used by the AI-EDR project.
+This document defines how endpoint observations are represented throughout the AI-EDR project.
 
-The schema has two purposes:
+The schema has two related but distinct responsibilities:
 
-1. Represent **ADFA-WD** data accurately enough to build the first machine-learning experiments.
-2. Define a **future-proof normalized endpoint event format** for the eventual EDR sensor.
+1. Represent **ADFA-WD** accurately for the initial machine-learning research.
+2. Define a **canonical telemetry model** that can later receive data from the project's own Windows EDR sensor.
 
-ADFA-WD is a Windows host-based intrusion-detection dataset provided by UNSW Canberra at ADFA. UNSW describes it as a dataset intended for evaluation of system-call-based HIDS and provides the **Full Process Traces** for download.
+These responsibilities must not be confused.
 
-The dataset was collected from a **Windows XP SP2** environment and contains system-call traces associated with normal and attack activity. Published descriptions report that the dataset also contains process-oriented information such as process names, PIDs, and return values.
-
-The schema therefore distinguishes between:
-
-```text
-RAW ADFA-WD DATA
-        ↓
-ADFA-WD PARSER
-        ↓
-NORMALIZED EVENT
-        ↓
-FEATURE ENGINE
-        ↓
-MODEL
-```
-
----
-
-# 2. Design Principles
-
-## 2.1 Preserve the source
-
-The original ADFA-WD information must never be discarded during ingestion.
-
-The pipeline should retain:
-
-* original file
-* original trace
-* original record/order
-* source category
-* source dataset
-* source filename
-* parser version
-
-The normalized representation is derived data.
-
----
-
-## 2.2 Separate source format from internal format
-
-ADFA-WD is a historical benchmark.
-
-The eventual EDR will collect modern Windows telemetry that may include:
-
-* process creation
-* process termination
-* network connections
-* files
-* registry
-* services
-* scheduled tasks
-* authentication
-* PowerShell
-* modules/DLLs
-* security events
+ADFA-WD is a historical Windows host-based intrusion-detection dataset intended for system-call-based HIDS evaluation. UNSW provides the **Full Process Traces** separately from the **ADFA-WD:SAA stealth-attack addendum**.
 
 Therefore:
 
-> **ADFA-WD is an input to the architecture, not the architecture itself.**
+```text
+                 SOURCE DATA
+                     │
+          ┌──────────┴──────────┐
+          │                     │
+      ADFA-WD              Future EDR
+      adapter               sensor
+          │                     │
+          └──────────┬──────────┘
+                     ▼
+              CANONICAL MODEL
+                     │
+                     ▼
+              FEATURE ENGINE
+                     │
+                     ▼
+                  MODEL
+                     │
+                     ▼
+                 DECISION
+```
 
 ---
 
-## 2.3 Events must be traceable
+# 2. Core Principle
 
-Every normalized event must be traceable back to its source.
+The most important rule is:
 
-```text
-model prediction
-      ↓
-feature vector
-      ↓
-normalized event
-      ↓
-raw trace
-      ↓
-source file
-```
+> **Do not force a dataset to contain telemetry that it does not actually provide.**
 
-This allows experiments to be reproduced.
+ADFA-WD observations must remain faithful to the source.
 
----
+For example, if a trace contains a sequence of module/offset observations but no timestamp, network connection, command line, registry event, or file hash, the normalized representation must not invent those fields.
 
-## 2.4 Labels are metadata, not event fields
-
-The observed behaviour and the ground-truth label should remain separate.
-
-For example:
+Unavailable information is represented as unavailable.
 
 ```text
-event:
-    process/system-call behaviour
+available source information
+        ↓
+     preserve
 
-label:
-    attack
+unavailable information
+        ↓
+       null
 ```
-
-The event representation should not contain information that would only be available after classification.
-
-This prevents accidental label leakage.
 
 ---
 
 # 3. Data Layers
 
-The data pipeline contains four principal representations.
+The project uses five logical layers.
 
 ```text
-┌───────────────────────┐
-│ 1. RAW SOURCE         │
-│                       │
-│ ADFA-WD original data │
-└───────────┬───────────┘
-            │
-            ▼
-┌───────────────────────┐
-│ 2. PARSED EVENT       │
-│                       │
-│ Dataset-specific      │
-│ representation        │
-└───────────┬───────────┘
-            │
-            ▼
-┌───────────────────────┐
-│ 3. NORMALIZED EVENT   │
-│                       │
-│ Common AI-EDR schema  │
-└───────────┬───────────┘
-            │
-            ▼
-┌───────────────────────┐
-│ 4. FEATURE RECORD     │
-│                       │
-│ ML-ready representation│
-└───────────────────────┘
+┌───────────────────────────┐
+│ 1. RAW SOURCE             │
+│                           │
+│ Original ADFA-WD / EDR    │
+└─────────────┬─────────────┘
+              ↓
+┌───────────────────────────┐
+│ 2. SOURCE REPRESENTATION  │
+│                           │
+│ ADFA-WD trace / EDR event │
+└─────────────┬─────────────┘
+              ↓
+┌───────────────────────────┐
+│ 3. CANONICAL REPRESENT.   │
+│                           │
+│ Common project schema     │
+└─────────────┬─────────────┘
+              ↓
+┌───────────────────────────┐
+│ 4. FEATURE REPRESENTATION │
+│                           │
+│ ML-ready data             │
+└─────────────┬─────────────┘
+              ↓
+┌───────────────────────────┐
+│ 5. MODEL / DECISION       │
+│                           │
+│ Prediction + policy       │
+└───────────────────────────┘
 ```
 
 ---
 
-# 4. ADFA-WD Source Model
+# 4. Source Data Types
 
-ADFA-WD is fundamentally a **host-based/system-call trace dataset**, rather than a modern multi-source EDR telemetry dataset.
+The initial project has two ADFA-WD-related source types.
 
-Published descriptions identify information including:
+## 4.1 ADFA-WD Full Process Traces
 
-* system-call sequences
-* process names
-* process identifiers (PIDs)
-* return values
+Primary research dataset.
 
-Other descriptions of the dataset characterize the Windows traces around DLL/function activity.
+The downloaded archive contains:
 
-The first parser must therefore treat the ADFA-WD trace itself as the authoritative source representation.
+```text
+Full_Process_Traces/
+├── Full_Trace_Training_Data/
+├── Full_Trace_Validation_Data/
+└── Full_Trace_Attack_Data/
+```
+
+The project's inspected archive contains:
+
+```text
+Training traces:     355
+Validation traces:  1,827
+Attack traces:      5,542
+```
+
+These traces are represented as `.GHC` files.
+
+The `.GHC` representation observed in the supplied archive consists primarily of ordered observations such as:
+
+```text
+ntdll.dll+0x16d33
+ntdll.dll+0x16f03
+ntdll.dll+0x1ce16
+kernel32.dll+0x1bb9
+...
+```
+
+Therefore the fundamental ADFA-WD object is:
+
+> **an ordered behavioural trace sequence.**
 
 ---
 
-# 5. Raw Event Representation
+# 5. ADFA-WD:SAA
 
-Every imported record must initially be represented as a raw object.
+ADFA-WD:SAA is treated as a separate source.
+
+UNSW describes it as a **stealth attack addendum for evaluation in conjunction with ADFA-WD**.
+
+It must not automatically be merged into the initial training set.
+
+Initial strategy:
+
+```text
+ADFA-WD Full Process Traces
+        ↓
+initial training / validation
+
+ADFA-WD:SAA
+        ↓
+later evaluation / generalization
+```
+
+The SAA source may contain richer process-oriented XML information than the `.GHC` traces.
+
+That information must remain in its own source representation before any attempt is made to map it into the canonical schema.
+
+---
+
+# 6. Trace Is the Primary ADFA-WD Unit
+
+For ADFA-WD, the primary analytical unit is:
+
+```text
+TRACE
+```
+
+rather than:
+
+```text
+individual EDR event
+```
+
+A trace is an ordered sequence:
+
+```text
+trace
+│
+├── observation 0
+├── observation 1
+├── observation 2
+├── observation 3
+├── ...
+└── observation N
+```
+
+This distinction is fundamental to the first ML experiments.
+
+---
+
+# 7. ADFA-WD Source Trace Schema
+
+Each ADFA-WD trace should initially be represented as:
 
 ```json
 {
+  "trace_id": "uuid",
+
   "source": {
     "dataset": "ADFA-WD",
-    "file_name": "source_file",
+    "format": "GHC",
     "partition": "training",
-    "parser_version": "0.1.0"
+    "source_file": "filename.GHC"
   },
 
-  "raw": {
-    "record": "original source representation"
+  "observations": [
+    {
+      "position": 0,
+      "value": "ntdll.dll+0x16d33"
+    },
+    {
+      "position": 1,
+      "value": "ntdll.dll+0x16f03"
+    }
+  ]
+}
+```
+
+This is the **source representation**.
+
+It should remain as close as possible to the actual dataset.
+
+---
+
+# 8. Observation
+
+An ADFA-WD observation is an element in a trace.
+
+Initial representation:
+
+```json
+{
+  "position": 147,
+  "value": "kernel32.dll+0x1bb9"
+}
+```
+
+Required fields:
+
+| Field      | Type    | Description                |
+| ---------- | ------- | -------------------------- |
+| `position` | integer | Position within the trace  |
+| `value`    | string  | Original observation value |
+
+The original value must be preserved.
+
+---
+
+# 9. Token Representation
+
+The `.GHC` observations can be treated as tokens.
+
+For example:
+
+```text
+ntdll.dll+0x16d33
+```
+
+may be represented internally as:
+
+```text
+TOKEN
+│
+├── module = ntdll.dll
+└── offset = 0x16d33
+```
+
+However, the parser must retain:
+
+```text
+raw_token = "ntdll.dll+0x16d33"
+```
+
+The project must not discard the original token after tokenization.
+
+---
+
+# 10. Token Object
+
+A parsed token may therefore contain:
+
+```json
+{
+  "position": 0,
+
+  "raw": "ntdll.dll+0x16d33",
+
+  "parsed": {
+    "module": "ntdll.dll",
+    "offset": "0x16d33"
   }
 }
 ```
 
-No transformation should overwrite the raw value.
-
----
-
-# 6. Dataset Partition
-
-ADFA-WD separates normal training, normal validation, and attack traces. Published descriptions report:
-
-* **355 normal training traces**
-* **1,827 normal validation traces**
-* **5,542 attack traces**
-
-The attack traces are associated with multiple attack scenarios.
-
-The schema therefore supports:
-
-```text
-training
-validation
-attack
-```
-
-as source-level dataset partitions.
-
-## 6.1 Partition field
+If parsing fails:
 
 ```json
 {
-  "dataset_partition": "training"
+  "position": 0,
+
+  "raw": "unknown-source-value",
+
+  "parsed": {
+    "module": null,
+    "offset": null
+  }
+}
+```
+
+The original value remains authoritative.
+
+---
+
+# 11. Trace Identity
+
+Every trace receives an internal identifier.
+
+```json
+{
+  "trace_id": "uuid"
+}
+```
+
+The source filename must also be retained:
+
+```json
+{
+  "source_file": "original-file-name.GHC"
+}
+```
+
+The filename is provenance.
+
+It should not automatically become an ML feature.
+
+---
+
+# 12. Trace Position
+
+Because ADFA-WD does not provide modern event timestamps for these observations, sequence order is represented explicitly.
+
+```json
+{
+  "position": 0
+}
+```
+
+followed by:
+
+```json
+{
+  "position": 1
+}
+```
+
+and:
+
+```json
+{
+  "position": 2
+}
+```
+
+This means:
+
+```text
+position ≠ timestamp
+```
+
+Sequence order must never be converted into a fabricated timestamp.
+
+---
+
+# 13. Trace Length
+
+Each trace should expose:
+
+```json
+{
+  "trace_length": 22725
+}
+```
+
+This is derived metadata.
+
+It is useful for:
+
+* dataset statistics
+* sequence preprocessing
+* batching
+* model evaluation
+* anomaly analysis
+
+It should be calculated from the actual trace.
+
+---
+
+# 14. Dataset Partition
+
+The source partition is represented separately:
+
+```json
+{
+  "partition": "training"
 }
 ```
 
@@ -236,264 +437,204 @@ validation
 attack
 ```
 
-Important:
+These values describe the source organization.
 
-`dataset_partition` is **not** the same thing as the ML label.
+They are not model predictions.
 
 ---
 
-# 7. Ground-Truth Label
+# 15. Ground Truth
 
-The label is represented independently.
+Ground truth is stored separately from the observation sequence.
+
+Initial binary classification:
 
 ```json
 {
   "label": {
     "class": "benign",
-    "source": "dataset"
+    "source": "ADFA-WD"
   }
 }
 ```
 
-Allowed initial classes:
+or:
+
+```json
+{
+  "label": {
+    "class": "malicious",
+    "source": "ADFA-WD"
+  }
+}
+```
+
+Initial mapping:
 
 ```text
-benign
-malicious
+Full_Trace_Training_Data
+        ↓
+      benign
+
+Full_Trace_Validation_Data
+        ↓
+      benign
+
+Full_Trace_Attack_Data
+        ↓
+     malicious
+```
+
+This mapping follows the dataset's source organization.
+
+---
+
+# 16. Label Leakage Prevention
+
+The following are **metadata**, not model features:
+
+```text
+partition
+label.class
+source_file
+dataset name
+attack directory name
+attack family
+trace identifier
+```
+
+For example, this is invalid:
+
+```text
+features = [
+    syscall_sequence,
+    partition
+]
+```
+
+because:
+
+```text
+partition = attack
+```
+
+can reveal the answer.
+
+Correct:
+
+```text
+features = [
+    behavioural_sequence
+]
+
+label = malicious
+```
+
+---
+
+# 17. Canonical Event Model
+
+The eventual EDR will require a richer representation than ADFA-WD provides.
+
+The canonical model therefore supports an event-oriented representation:
+
+```json
+{
+  "event_id": "uuid",
+
+  "trace_id": "uuid",
+
+  "timestamp": null,
+
+  "host": {},
+
+  "process": {},
+
+  "user": {},
+
+  "activity": {},
+
+  "file": {},
+
+  "registry": {},
+
+  "network": {},
+
+  "module": {},
+
+  "provenance": {}
+}
+```
+
+However:
+
+> **ADFA-WD does not need to populate every canonical field.**
+
+---
+
+# 18. Activity Object
+
+The canonical activity object represents what the endpoint did.
+
+```json
+{
+  "activity": {
+    "type": "system_call_sequence_observation",
+
+    "raw_value": "ntdll.dll+0x16d33",
+
+    "module": "ntdll.dll",
+
+    "offset": "0x16d33"
+  }
+}
+```
+
+This is preferable to prematurely calling every observation a modern Windows API event.
+
+---
+
+# 19. Process Context
+
+The canonical schema reserves process context:
+
+```json
+{
+  "process": {
+    "name": null,
+    "pid": null,
+    "parent_pid": null,
+    "path": null,
+    "command_line": null
+  }
+}
 ```
 
 For ADFA-WD:
 
 ```text
-training     → benign
-validation   → benign
-attack       → malicious
+populate only if directly available from the relevant source
 ```
 
-This mapping is derived from the dataset's documented organization of normal and attack traces.
-
-The normalized event itself must not contain a field such as:
+Otherwise:
 
 ```text
-is_malicious = true
+null
 ```
 
-unless it exists explicitly in the **label layer**.
+The project must not infer modern process metadata from a trace token.
 
 ---
 
-# 8. Event Identity
+# 20. Host Context
 
-Every normalized event requires a unique internal identifier.
-
-```json
-{
-  "event_id": "uuid"
-}
-```
-
-The identifier must be unique within the local dataset.
-
-Recommended fields:
-
-```json
-{
-  "event_id": "uuid",
-  "trace_id": "uuid",
-  "event_sequence": 0
-}
-```
-
-### Definitions
-
-`event_id`
-
-Unique identifier for a single normalized event.
-
-`trace_id`
-
-Identifier for the source trace from which the event originated.
-
-`event_sequence`
-
-The ordinal position of the event within the trace.
-
----
-
-# 9. Trace Object
-
-A trace represents the source-level behavioural sequence.
-
-```json
-{
-  "trace_id": "uuid",
-
-  "trace": {
-    "dataset": "ADFA-WD",
-    "partition": "training",
-    "source_file": "example",
-    "event_count": 1234
-  }
-}
-```
-
-The trace is important because many detection approaches rely on **sequences**, not isolated events.
-
-Therefore the schema must support:
-
-```text
-event₁ → event₂ → event₃ → event₄ → ...
-```
-
-rather than treating every event as completely independent.
-
----
-
-# 10. Process Context
-
-Where process information is present in the source, it should be represented explicitly.
-
-```json
-{
-  "process": {
-    "name": "process.exe",
-    "pid": 1234,
-    "parent_pid": null
-  }
-}
-```
-
-### Fields
-
-| Field          | Type         | Description                              |
-| -------------- | ------------ | ---------------------------------------- |
-| `name`         | string       | Process name                             |
-| `pid`          | integer      | Process identifier                       |
-| `parent_pid`   | integer/null | Parent process identifier when available |
-| `path`         | string/null  | Executable path if available             |
-| `command_line` | string/null  | Command line if available                |
-
-ADFA-WD publications specifically identify process names and PIDs among the information associated with the traces.
-
-Fields unavailable in ADFA-WD should remain `null`.
-
-They must **not** be invented or reconstructed without evidence.
-
----
-
-# 11. System-Call / API Activity
-
-The most important ADFA-WD-specific portion of the schema is the observed system-call/API activity.
-
-```json
-{
-  "activity": {
-    "type": "system_call",
-    "library": "example.dll",
-    "function": "example_function",
-    "identifier": "source-specific identifier",
-    "return_value": "source-specific value"
-  }
-}
-```
-
-The exact parser representation must preserve the original identifier/function information as supplied by the source.
-
-Because ADFA-WD is an older Windows host dataset, the raw representation should not be forcibly translated into modern Windows API names when such mapping is unavailable.
-
-Published descriptions note DLL/function information and that ADFA-WD contains system-call-related traces.
-
----
-
-# 12. Sequence Representation
-
-The sequence must be retained separately from event-level attributes.
-
-Example:
-
-```json
-{
-  "sequence": {
-    "position": 0,
-    "length": 512,
-    "previous_event_id": null,
-    "next_event_id": "uuid"
-  }
-}
-```
-
-For example:
-
-```text
-Event 001
-  ↓
-Event 002
-  ↓
-Event 003
-  ↓
-Event 004
-```
-
-This is important because the first model will investigate whether **behavioural sequences** provide predictive information.
-
----
-
-# 13. Temporal Representation
-
-The ideal normalized schema contains timestamps:
-
-```json
-{
-  "timestamp": "2026-09-23T00:00:00Z"
-}
-```
-
-However, ADFA-WD does not provide modern EDR-grade temporal telemetry for every event in the same manner that our future sensor will.
-
-Therefore:
-
-```text
-timestamp = null
-```
-
-is valid when unavailable.
-
-The sequence position must not be incorrectly converted into a timestamp.
-
-Instead:
-
-```json
-{
-  "timestamp": null,
-  "sequence": {
-    "position": 42
-  }
-}
-```
-
-This explicitly distinguishes:
-
-```text
-time
-```
-
-from:
-
-```text
-order
-```
-
----
-
-# 14. Host Context
-
-The eventual EDR requires endpoint identity.
+Canonical host information:
 
 ```json
 {
   "host": {
-    "host_id": "host-001",
-    "hostname": null,
+    "host_id": null,
+
     "os": {
       "family": "Windows",
       "version": null
@@ -502,67 +643,37 @@ The eventual EDR requires endpoint identity.
 }
 ```
 
-For ADFA-WD:
+When the source explicitly identifies the collection environment, that information may be recorded as source metadata.
 
-```text
-os.family = Windows
-```
-
-The dataset's collection environment is Windows XP SP2.
-
-We should preserve the historical operating-system context rather than pretending the traces originated from modern Windows 10/11.
+The eventual Windows EDR sensor will populate this with current endpoint information.
 
 ---
 
-# 15. User Context
+# 21. Timestamp
 
-The normalized schema reserves space for user context.
+Canonical events support:
 
 ```json
 {
-  "user": {
-    "username": null,
-    "sid": null,
-    "integrity_level": null,
-    "logon_session": null
-  }
+  "timestamp": null
 }
 ```
 
-For ADFA-WD, unavailable fields remain:
+For ADFA-WD Full Process Traces:
 
 ```text
-null
+timestamp = null
 ```
 
-These fields are primarily for the future Windows 11 sensor.
+unless an authoritative timestamp is present in the source being processed.
+
+The parser must never generate timestamps from sequence position.
 
 ---
 
-# 16. Network Context
+# 22. File Context
 
-The future EDR schema supports network activity.
-
-```json
-{
-  "network": {
-    "direction": null,
-    "protocol": null,
-    "source_ip": null,
-    "source_port": null,
-    "destination_ip": null,
-    "destination_port": null
-  }
-}
-```
-
-ADFA-WD should not be populated with fabricated network events where they are absent from the dataset.
-
----
-
-# 17. File Context
-
-Reserved for future endpoint telemetry:
+Reserved for future EDR telemetry:
 
 ```json
 {
@@ -570,12 +681,12 @@ Reserved for future endpoint telemetry:
     "action": null,
     "path": null,
     "extension": null,
-    "sha256": null
+    "hash": null
   }
 }
 ```
 
-Possible future `action` values:
+Possible future actions:
 
 ```text
 create
@@ -586,11 +697,13 @@ read
 execute
 ```
 
+ADFA-WD should not be populated with fabricated file events.
+
 ---
 
-# 18. Registry Context
+# 23. Registry Context
 
-Reserved for Windows EDR telemetry:
+Reserved for future Windows telemetry:
 
 ```json
 {
@@ -613,13 +726,32 @@ delete
 rename
 ```
 
-This will not be populated from ADFA-WD unless the source explicitly provides the information.
+---
+
+# 24. Network Context
+
+Reserved for future endpoint telemetry:
+
+```json
+{
+  "network": {
+    "direction": null,
+    "protocol": null,
+    "source_ip": null,
+    "source_port": null,
+    "destination_ip": null,
+    "destination_port": null
+  }
+}
+```
+
+No network information should be fabricated for ADFA-WD.
 
 ---
 
-# 19. Module / DLL Context
+# 25. Module Context
 
-Because ADFA-WD includes Windows/DLL-related activity, modules are represented separately.
+The canonical model supports modules:
 
 ```json
 {
@@ -627,65 +759,91 @@ Because ADFA-WD includes Windows/DLL-related activity, modules are represented s
     "name": null,
     "path": null,
     "base_address": null,
-    "size": null
+    "size": null,
+    "hash": null,
+    "signed": null
   }
 }
 ```
 
-A future sensor can extend this with:
+For ADFA-WD, module information may be derived from an observation such as:
 
 ```text
-hash
-signature
-publisher
-load_address
-signed
+ntdll.dll+0x16d33
 ```
+
+but the parser must distinguish:
+
+```text
+observed module name
+```
+
+from:
+
+```text
+full module metadata
+```
+
+The latter must not be invented.
 
 ---
 
-# 20. Source Provenance
+# 26. Sequence Context
 
-Every event must contain provenance.
+Sequence information is first-class data.
 
 ```json
 {
-  "provenance": {
-    "dataset": "ADFA-WD",
-    "source_file": "file-name",
-    "source_partition": "training",
-    "source_record": 123,
-    "parser_version": "0.1.0"
+  "sequence": {
+    "position": 147,
+    "length": 512,
+
+    "previous": null,
+    "next": null
   }
 }
 ```
 
-This is mandatory.
+For ADFA-WD, the minimum required fields are:
 
-The system must be able to answer:
+```text
+position
+length
+```
 
-> "Which original observation produced this training sample?"
+The sequence itself remains the primary behavioural representation.
 
 ---
 
-# 21. Complete Normalized Event
+# 27. ADFA-WD Canonical Representation
 
-The initial canonical event structure is:
+After source parsing, an observation may become:
 
 ```json
 {
+  "schema_version": "0.2",
+
   "event_id": "uuid",
   "trace_id": "uuid",
-  "event_sequence": 0,
 
-  "timestamp": null,
+  "sequence": {
+    "position": 147,
+    "length": 512
+  },
+
+  "activity": {
+    "type": "system_call_sequence_observation",
+
+    "raw_value": "ntdll.dll+0x16d33",
+
+    "module": "ntdll.dll",
+
+    "offset": "0x16d33"
+  },
 
   "host": {
-    "host_id": "host-001",
-    "hostname": null,
     "os": {
-      "family": "Windows",
-      "version": "Windows XP SP2"
+      "family": "Windows"
     }
   },
 
@@ -697,108 +855,220 @@ The initial canonical event structure is:
     "command_line": null
   },
 
-  "user": {
-    "username": null,
-    "sid": null,
-    "integrity_level": null,
-    "logon_session": null
-  },
+  "timestamp": null,
 
-  "activity": {
-    "type": "system_call",
-    "library": null,
-    "function": null,
-    "identifier": null,
-    "return_value": null
-  },
-
-  "module": {
-    "name": null,
-    "path": null,
-    "base_address": null,
-    "size": null
-  },
-
-  "network": {
-    "direction": null,
-    "protocol": null,
-    "source_ip": null,
-    "source_port": null,
-    "destination_ip": null,
-    "destination_port": null
-  },
-
-  "file": {
-    "action": null,
-    "path": null,
-    "extension": null,
-    "sha256": null
-  },
-
-  "registry": {
-    "action": null,
-    "key": null,
-    "value_name": null,
-    "value_type": null,
-    "value": null
-  },
-
-  "sequence": {
-    "position": 0,
-    "length": null,
-    "previous_event_id": null,
-    "next_event_id": null
-  },
+  "file": null,
+  "registry": null,
+  "network": null,
 
   "provenance": {
     "dataset": "ADFA-WD",
-    "source_file": null,
-    "source_partition": null,
-    "source_record": null,
+    "format": "GHC",
+    "source_file": "example.GHC",
+    "partition": "training",
     "parser_version": "0.1.0"
   }
 }
 ```
 
+This is a **canonical observation**, not a claim that ADFA-WD contains all of those fields.
+
 ---
 
-# 22. Label Object
+# 28. Trace-Level Canonical Representation
 
-Labels must be stored separately.
+For machine-learning experiments, the trace remains available as a first-class object.
 
 ```json
 {
+  "trace_id": "uuid",
+
+  "observations": [
+    {
+      "position": 0,
+      "activity": {}
+    },
+    {
+      "position": 1,
+      "activity": {}
+    }
+  ],
+
   "label": {
-    "class": "benign",
-    "source": "ADFA-WD",
-    "confidence": 1.0
+    "class": "benign"
+  },
+
+  "provenance": {
+    "dataset": "ADFA-WD",
+    "partition": "training"
   }
 }
 ```
 
-Initial values:
+This allows both:
 
 ```text
-benign
-malicious
+trace-level models
 ```
 
-`confidence` refers to **ground-truth confidence**, not model confidence.
-
-For ADFA-WD's dataset-defined normal/attack partition, this may initially be represented as:
+and:
 
 ```text
-benign = 1.0
-malicious = 1.0
+observation/window-level models
 ```
 
-because the label is inherited from the benchmark partition.
+to be tested.
 
 ---
 
-# 23. Model Output Object
+# 29. Window Representation
 
-Model predictions must also remain separate from ground truth.
+The feature engine may construct behavioural windows:
+
+```text
+Observation 100
+Observation 101
+Observation 102
+Observation 103
+Observation 104
+```
+
+For example:
+
+```json
+{
+  "window": {
+    "trace_id": "uuid",
+    "start_position": 100,
+    "end_position": 104,
+    "length": 5
+  }
+}
+```
+
+The window is derived data.
+
+It must retain the source trace identity.
+
+---
+
+# 30. Token Vocabulary
+
+The feature pipeline may create a vocabulary:
+
+```text
+TOKEN
+  ↓
+INTEGER ID
+```
+
+Example:
+
+```text
+ntdll.dll+0x16d33 → 184
+ntdll.dll+0x16f03 → 57
+kernel32.dll+0x1bb9 → 921
+```
+
+The vocabulary must be versioned.
+
+```json
+{
+  "vocabulary_version": "0.1"
+}
+```
+
+The original raw token must always remain recoverable.
+
+---
+
+# 31. Feature Representation
+
+The feature engine transforms canonical observations into model input.
+
+Possible initial representations:
+
+### Token IDs
+
+```text
+[184, 57, 921, 57, 184]
+```
+
+### Frequency features
+
+```text
+token_frequency
+module_frequency
+sequence_length
+unique_token_count
+```
+
+### N-grams
+
+```text
+token₁ → token₂
+token₂ → token₃
+```
+
+### Sequence embeddings
+
+Later:
+
+```text
+tokens
+  ↓
+embedding
+  ↓
+sequence encoder
+  ↓
+vector
+```
+
+The first experiments should compare simple approaches before assuming that a neural architecture is necessary.
+
+---
+
+# 32. Model Input Boundary
+
+The model must consume:
+
+```text
+FEATURE REPRESENTATION
+```
+
+not:
+
+```text
+RAW DATASET
+```
+
+and not:
+
+```text
+GROUND TRUTH
+```
+
+Architecture:
+
+```text
+Raw .GHC
+   ↓
+Parser
+   ↓
+Canonical trace
+   ↓
+Feature engine
+   ↓
+Model input
+   ↓
+Model
+```
+
+---
+
+# 33. Model Output
+
+The initial model should produce a probability distribution.
 
 ```json
 {
@@ -806,44 +1076,78 @@ Model predictions must also remain separate from ground truth.
     "model_id": "edr-model-0.1.0",
 
     "classification": {
-      "benign": 0.04,
-      "malicious": 0.96
-    },
-
-    "severity": 8.1,
-
-    "escalation_probability": 0.93
+      "benign": 0.06,
+      "malicious": 0.94
+    }
   }
 }
 ```
 
-This creates a clean separation:
+The probabilities must remain distinct from ground truth.
 
 ```text
-OBSERVATION
-    ↓
-GROUND TRUTH
-    ↓
-MODEL PREDICTION
+ground truth:
+    malicious
+
+model:
+    malicious = 0.94
 ```
 
 ---
 
-# 24. Decision Object
+# 34. Future System-1 Output
 
-The model prediction is not itself the operational decision.
+Once the binary detection baseline is established, the model can eventually produce:
+
+```json
+{
+  "model_output": {
+    "classification": {
+      "benign": 0.06,
+      "malicious": 0.94
+    },
+
+    "severity": 8.1,
+
+    "escalation_probability": 0.92
+  }
+}
+```
+
+These are model outputs.
+
+They are not part of the source event.
+
+---
+
+# 35. Decision Layer
+
+The decision engine sits after the model.
+
+```text
+observation
+     ↓
+features
+     ↓
+model
+     ↓
+prediction
+     ↓
+decision policy
+```
+
+Example:
 
 ```json
 {
   "decision": {
     "action": "investigate",
-    "reason": "threshold",
     "policy_version": "0.1.0"
   }
 }
 ```
 
-Possible initial actions:
+Initial actions:
 
 ```text
 record
@@ -852,680 +1156,521 @@ investigate
 alert
 ```
 
-Automatic endpoint containment is intentionally not part of the first version.
+The first implementation should not automatically perform destructive containment.
 
 ---
 
-# 25. Feature Record
+# 36. Provenance
 
-The feature layer converts normalized events into model-ready information.
+Every canonical observation must identify where it originated.
 
-Example:
+Minimum provenance:
 
 ```json
 {
-  "feature_record": {
-    "event_id": "uuid",
-
-    "features": {
-      "process_name_id": 42,
-      "activity_type_id": 7,
-      "function_id": 193,
-      "return_value_id": 2,
-
-      "sequence_position": 41,
-      "sequence_length": 512,
-
-      "previous_activity_id": 8,
-      "next_activity_id": 17
-    }
-  }
-}
-```
-
-Feature engineering must be deterministic.
-
-Given identical normalized input and the same feature-schema version:
-
-```text
-same event → same feature representation
-```
-
----
-
-# 26. Sequence Features
-
-Because ADFA-WD is sequence-oriented, the first feature pipeline should preserve sequence information.
-
-Potential representations include:
-
-### Frequency
-
-```text
-count(function)
-count(library)
-count(return_value)
-```
-
-### N-grams
-
-```text
-system_call_1 → system_call_2
-system_call_2 → system_call_3
-```
-
-### Sequence embeddings
-
-Later experiments may represent a sequence as:
-
-```text
-token sequence
-      ↓
-embedding
-      ↓
-sequence encoder
-      ↓
-vector representation
-```
-
-### Windowed behaviour
-
-```text
-event[t-N : t]
-```
-
-This allows the model to reason about recent behavioural context rather than isolated calls.
-
----
-
-# 27. Event Window
-
-The model should eventually support a context window.
-
-Example:
-
-```text
-Event 97
-Event 98
-Event 99
-Event 100 ← current event
-Event 101
-```
-
-For real-time inference, the primary form will be:
-
-```text
-previous N events + current event
-```
-
-Future investigation models may use larger windows.
-
----
-
-# 28. Trace-Level Representation
-
-For experiments where a complete trace is the prediction unit:
-
-```json
-{
-  "trace_id": "uuid",
-
-  "events": [
-    {
-      "event_sequence": 0
-    },
-    {
-      "event_sequence": 1
-    },
-    {
-      "event_sequence": 2
-    }
-  ],
-
-  "label": {
-    "class": "malicious"
-  }
-}
-```
-
-This allows us to compare:
-
-```text
-event-level classification
-```
-
-against:
-
-```text
-trace-level classification
-```
-
----
-
-# 29. ADFA-WD Attack Identity
-
-The attack category should be stored as metadata when the source partition provides it.
-
-Example:
-
-```json
-{
-  "attack": {
-    "present": true,
-    "family": "source-defined attack category"
-  }
-}
-```
-
-The parser must preserve the dataset's original attack grouping.
-
-It must not invent modern ATT&CK mappings.
-
-MITRE ATT&CK mappings can be introduced later as a separate enrichment layer.
-
----
-
-# 30. Preventing Data Leakage
-
-The following fields must never be passed directly into the model as predictive features:
-
-```text
-dataset_partition
-label.class
-ground_truth
-attack.present
-attack.family
-source_partition
-```
-
-These fields are metadata.
-
-For example, this would be invalid:
-
-```text
-features = [
-    syscall_sequence,
-    process_name,
-    dataset_partition
-]
-```
-
-because:
-
-```text
-dataset_partition = attack
-```
-
-effectively reveals the answer.
-
-Correct:
-
-```text
-features = [
-    syscall_sequence,
-    process_name
-]
-```
-
-and separately:
-
-```text
-label = malicious
-```
-
----
-
-# 31. ADFA-WD Parser Contract
-
-The parser must perform the following operations:
-
-```text
-1. Locate source file
-2. Identify source partition
-3. Preserve original content
-4. Parse trace
-5. Generate trace_id
-6. Generate event_id
-7. Preserve event order
-8. Extract source-supported metadata
-9. Create normalized events
-10. Attach provenance
-11. Attach ground-truth label
-12. Validate schema
-```
-
-The parser must never silently drop an event.
-
-Malformed records should be recorded in a parser-error structure.
-
----
-
-# 32. Parser Error Object
-
-```json
-{
-  "parse_error": {
-    "source_file": "file",
-    "source_record": 123,
-    "error_type": "invalid_record",
-    "message": "description",
-    "raw_value": "original value"
-  }
-}
-```
-
-A parser error must never silently become a normal event.
-
----
-
-# 33. Schema Validation
-
-Every normalized event should pass structural validation.
-
-Minimum requirements:
-
-```text
-event_id exists
-trace_id exists
-event_sequence exists
-provenance exists
-activity exists
-```
-
-Optional data may be:
-
-```text
-null
-```
-
-when unavailable.
-
----
-
-# 34. Schema Versioning
-
-The schema itself must be versioned.
-
-Example:
-
-```text
-EVENT-SCHEMA v0.1
-```
-
-Each normalized event should contain:
-
-```json
-{
-  "schema_version": "0.1"
-}
-```
-
-If the schema later changes:
-
-```text
-0.2
-0.3
-1.0
-```
-
-old datasets must remain reproducible.
-
----
-
-# 35. Relationship to the Future Windows EDR
-
-The ADFA-WD schema intentionally represents only a subset of what the eventual sensor will collect.
-
-```text
-                 COMMON SCHEMA
-                      │
-        ┌─────────────┴──────────────┐
-        ▼                            ▼
-    ADFA-WD                    Windows 11 EDR
-        │                            │
- system calls                  process events
- DLL/API data                  file events
- process metadata              registry events
-                               network events
-                               authentication
-                               services
-                               PowerShell
-```
-
-Both sources map into the same normalized representation.
-
-This allows us to test:
-
-```text
-benchmark data
-      ↓
-model architecture
-```
-
-before collecting our own modern endpoint data.
-
----
-
-# 36. What ADFA-WD Cannot Provide
-
-The following fields should not be assumed to exist merely because they belong in the future schema:
-
-```text
-modern Windows version
-full command line
-modern process tree
-network destination
-file hash
-registry path
-user SID
-integrity level
-digital signature
-parent/child relationships
-fine-grained timestamps
-```
-
-Unavailable information remains:
-
-```text
-null
-```
-
-unless the parser can establish it from the actual source.
-
-This limitation is important because ADFA-WD was created for system-call-based HIDS research rather than as a complete modern EDR telemetry corpus.
-
----
-
-# 37. Dataset Strategy
-
-The first dataset pipeline is:
-
-```text
-ADFA-WD Full Process Traces
-             │
-             ▼
-       ADFA-WD Parser
-             │
-             ▼
-       Raw Trace Store
-             │
-             ▼
-      Normalized Events
-             │
-             ▼
-        Feature Engine
-             │
-             ▼
-       Model Training
-```
-
-ADFA-WD:SAA remains separate initially.
-
-UNSW describes ADFA-WD:SAA as a stealth-attack addendum intended for evaluation in conjunction with ADFA-WD.
-
-Therefore:
-
-```text
-ADFA-WD
-    ↓
-training / validation experiments
-
-ADFA-WD:SAA
-    ↓
-secondary generalization evaluation
-```
-
-It should not automatically be merged into the initial training dataset.
-
----
-
-# 38. First Model Input
-
-The first experiment should not attempt to use every reserved schema field.
-
-Initial input:
-
-```text
-system-call/API sequence
-+
-available process context
-+
-return-value information
-```
-
-Conceptually:
-
-```text
-┌─────────────────────────┐
-│ ADFA-WD Trace            │
-│                         │
-│ activity₁               │
-│ activity₂               │
-│ activity₃               │
-│ ...                     │
-└───────────┬─────────────┘
-            ↓
-      Feature encoder
-            ↓
-      Model representation
-            ↓
-    System-1-style outputs
-```
-
----
-
-# 39. First Model Outputs
-
-The first model should begin with a single primary decision:
-
-```json
-{
-  "malicious_probability": 0.94
-}
-```
-
-Once the baseline works, additional outputs can be introduced:
-
-```json
-{
-  "malicious_probability": 0.94,
-  "benign_probability": 0.06,
-  "severity": 7.8,
-  "escalation_probability": 0.91
-}
-```
-
-Technique classification should be added only after the binary detection problem is properly understood.
-
----
-
-# 40. Research Progression
-
-The event schema supports this sequence:
-
-```text
-ADFA-WD
-   ↓
-Parsing
-   ↓
-Normalized traces
-   ↓
-Classical ML
-   ↓
-Sequence model
-   ↓
-Lightweight neural model
-   ↓
-Probability calibration
-   ↓
-System-1-style multi-output model
-   ↓
-ADFA-WD:SAA evaluation
-   ↓
-Modern Windows telemetry
-   ↓
-Actual EDR sensor
-```
-
----
-
-# 41. Example End-to-End Record
-
-```json
-{
-  "schema_version": "0.1",
-
-  "event_id": "8c51...",
-  "trace_id": "b21d...",
-  "event_sequence": 147,
-
-  "timestamp": null,
-
-  "host": {
-    "host_id": "adfa-wd-host",
-    "hostname": null,
-    "os": {
-      "family": "Windows",
-      "version": "Windows XP SP2"
-    }
-  },
-
-  "process": {
-    "name": "source-process",
-    "pid": 1234,
-    "parent_pid": null,
-    "path": null,
-    "command_line": null
-  },
-
-  "activity": {
-    "type": "system_call",
-    "library": "source.dll",
-    "function": "source_function",
-    "identifier": "source_identifier",
-    "return_value": "source_return_value"
-  },
-
-  "sequence": {
-    "position": 147,
-    "length": 512,
-    "previous_event_id": "7a...",
-    "next_event_id": "92..."
-  },
-
   "provenance": {
     "dataset": "ADFA-WD",
-    "source_file": "source_file",
-    "source_partition": "attack",
-    "source_record": 147,
+    "format": "GHC",
+    "source_file": "filename.GHC",
+    "partition": "training",
     "parser_version": "0.1.0"
   }
 }
 ```
 
-Separate label:
+This enables:
+
+```text
+prediction
+   ↓
+features
+   ↓
+canonical observation
+   ↓
+trace
+   ↓
+original source file
+```
+
+Reproducibility is a primary requirement.
+
+---
+
+# 37. Parser Errors
+
+Invalid source data must not silently disappear.
 
 ```json
 {
-  "event_id": "8c51...",
-  "label": {
-    "class": "malicious",
-    "source": "ADFA-WD"
+  "parse_error": {
+    "source_file": "filename.GHC",
+    "position": 147,
+    "error_type": "invalid_observation",
+    "message": "Unable to parse source value",
+    "raw_value": "original value"
   }
 }
 ```
 
----
-
-# 42. What This Schema Gives Us
-
-This architecture deliberately gives us two compatible worlds.
-
-### Benchmark world
-
-```text
-ADFA-WD
-system-call traces
-historical Windows environment
-```
-
-### EDR world
-
-```text
-modern endpoint sensor
-multiple telemetry sources
-real-time events
-process/file/network/registry context
-```
-
-The normalized schema provides the bridge.
+The raw value must be preserved where possible.
 
 ---
 
-# 43. Initial Implementation Target
+# 38. Schema Versioning
 
-The first implementation should therefore contain only:
+Every canonical record contains:
 
-```text
-/raw
-    original ADFA-WD files
-
-/parser
-    ADFA-WD parser
-
-/normalized
-    canonical events
-
-/labels
-    ground truth
-
-/features
-    ML-ready representations
+```json
+{
+  "schema_version": "0.2"
+}
 ```
 
-The initial model should consume:
+Schema changes must be versioned.
+
+Example:
 
 ```text
-normalized ADFA-WD sequences
+0.1
+0.2
+0.3
+1.0
 ```
 
-rather than directly accessing the raw files.
+Existing datasets must remain reproducible after schema evolution.
 
 ---
 
-# 44. Non-Goals
+# 39. ADFA-WD Adapter Boundary
 
-This schema does not currently attempt to:
+The ADFA-WD parser should have a clearly defined boundary:
 
-* force ADFA-WD into a modern EDR format
-* fabricate missing Windows telemetry
-* infer unavailable timestamps
-* invent process relationships
-* map every activity directly to ATT&CK
-* embed model predictions into raw telemetry
-* treat dataset labels as model features
-* assume ADFA-WD represents modern Windows behaviour
+```text
+                ADFA-WD
+                   │
+                   ▼
+            ┌─────────────┐
+            │ ADFA-WD     │
+            │ ADAPTER     │
+            └──────┬──────┘
+                   │
+                   ▼
+           Canonical Trace
+```
+
+The adapter is responsible for:
+
+* reading `.GHC` files
+* preserving raw observations
+* assigning trace identifiers
+* preserving sequence order
+* parsing module/offset structure where possible
+* assigning source partition
+* attaching ground truth
+* attaching provenance
+* reporting malformed records
+
+The adapter must not:
+
+* invent timestamps
+* invent process IDs
+* invent network connections
+* invent file events
+* invent registry events
+* infer ATT&CK techniques
+* insert model predictions
 
 ---
 
-# 45. Architectural Rule
+# 40. Future Windows EDR Adapter
 
-The most important rule in this document is:
-
-> **Raw telemetry is immutable evidence; normalized telemetry is a reproducible representation; features are derived data; model outputs are predictions; decisions are policy.**
-
-The layers must remain separate.
+The eventual Windows sensor will use a different source adapter.
 
 ```text
-RAW
- ↓
-NORMALIZED
- ↓
-FEATURES
- ↓
-MODEL
- ↓
-DECISION
+Windows endpoint
+       ↓
+Sensor
+       ↓
+Windows telemetry
+       ↓
+EDR adapter
+       ↓
+Canonical events
 ```
 
-This separation is required for reproducibility, evaluation, calibration and eventual deployment.
+It may provide:
+
+```text
+process creation
+process termination
+command line
+parent/child process
+file activity
+registry activity
+network connections
+authentication
+PowerShell
+services
+modules
+signatures
+hashes
+timestamps
+users
+integrity levels
+```
+
+Those capabilities belong to the future EDR telemetry source, not retroactively to ADFA-WD.
+
+---
+
+# 41. Source Adapters Are Independent
+
+The architecture therefore becomes:
+
+```text
+                 ┌──────────────┐
+                 │ ADFA-WD      │
+                 │ .GHC         │
+                 └──────┬───────┘
+                        │
+                 ADFA-WD adapter
+                        │
+                        ▼
+                  ┌───────────┐
+                  │           │
+                  │ CANONICAL │
+                  │   MODEL   │
+                  │           │
+                  └─────┬─────┘
+                        ▲
+                        │
+                  EDR adapter
+                        │
+                 ┌──────┴───────┐
+                 │ Windows      │
+                 │ endpoint     │
+                 └──────────────┘
+```
+
+This is the central architectural relationship.
+
+---
+
+# 42. ADFA-WD:SAA Adapter
+
+SAA should receive its own adapter:
+
+```text
+ADFA-WD:SAA
+     ↓
+SAA adapter
+     ↓
+SAA source representation
+     ↓
+canonical representation
+```
+
+The SAA parser must preserve its XML structure before normalization.
+
+This is especially important because the SAA material may contain process and module metadata that is not represented in the basic `.GHC` sequence format.
+
+---
+
+# 43. Training Dataset Separation
+
+The initial experiment must maintain explicit dataset boundaries.
+
+```text
+ADFA-WD Training
+       ↓
+     TRAIN
+
+ADFA-WD Validation
+       ↓
+   VALIDATION
+
+ADFA-WD Attack
+       ↓
+   TEST / ATTACK
+```
+
+The exact experimental split will be defined in `DATASET.md`.
+
+No random splitting of individual sequence tokens should be performed.
+
+---
+
+# 44. Sequence Leakage Prevention
+
+A sequence must remain intact during dataset splitting.
+
+Incorrect:
+
+```text
+trace A
+ ├── part 1 → training
+ └── part 2 → testing
+```
+
+Correct:
+
+```text
+trace A → one partition
+```
+
+This prevents information from the same behavioural trace appearing in both training and evaluation.
+
+---
+
+# 45. Attack-Family Metadata
+
+Attack-family information may be retained as metadata where supplied by the dataset.
+
+Example:
+
+```json
+{
+  "attack_metadata": {
+    "family": "source-defined category"
+  }
+}
+```
+
+However:
+
+```text
+attack_family
+```
+
+must not be used as a feature in the first binary detection model.
+
+Later experiments may investigate:
+
+```text
+binary detection
+        ↓
+attack-family classification
+        ↓
+behaviour generalization
+```
+
+---
+
+# 46. ATT&CK Mapping
+
+The schema does not initially assign MITRE ATT&CK techniques to ADFA-WD observations.
+
+Therefore:
+
+```text
+ATT&CK technique = null
+```
+
+unless a future research layer explicitly establishes and documents a mapping.
+
+This avoids confusing:
+
+```text
+dataset ground truth
+```
+
+with:
+
+```text
+analyst interpretation
+```
+
+---
+
+# 47. Initial ML Representation
+
+The first model should operate primarily on:
+
+```text
+ADFA-WD sequence
+```
+
+Potential first representation:
+
+```text
+raw token
+   ↓
+vocabulary
+   ↓
+integer sequence
+   ↓
+sequence model
+```
+
+A baseline should also be constructed using simpler statistical features.
+
+This gives us an empirical comparison between:
+
+```text
+classical ML
+```
+
+and:
+
+```text
+sequence/neural ML
+```
+
+---
+
+# 48. Future EDR Representation
+
+When the project moves from benchmark research to a real Windows endpoint:
+
+```text
+Windows telemetry
+        ↓
+canonical event
+        ↓
+temporal context
+        ↓
+behavioural window
+        ↓
+feature engine
+        ↓
+System-1 model
+```
+
+The canonical schema therefore acts as the bridge between:
+
+```text
+research dataset
+```
+
+and:
+
+```text
+real endpoint telemetry
+```
+
+---
+
+# 49. What ADFA-WD Represents
+
+ADFA-WD should be considered:
+
+```text
+SYSTEM-CALL / BEHAVIOURAL-SEQUENCE BENCHMARK
+```
+
+It should not be described as:
+
+```text
+complete modern EDR telemetry
+```
+
+It is valuable for:
+
+* sequence modelling
+* anomaly/detection research
+* feature engineering
+* baseline comparison
+* probability calibration
+* model experimentation
+* benchmarking
+
+It is insufficient by itself for validating a complete modern EDR sensor.
+
+UNSW itself describes the ADFA datasets as datasets designed for system-call-based HIDS evaluation.
+
+---
+
+# 50. Schema Success Criteria
+
+The schema is successful when:
+
+1. Every source observation can be traced back to its original file.
+2. Every trace has a stable internal identifier.
+3. Sequence order is preserved.
+4. Raw source values are preserved.
+5. Dataset labels remain separate from features.
+6. Missing telemetry is represented honestly.
+7. ADFA-WD can feed the ML pipeline.
+8. SAA can be evaluated independently.
+9. Future Windows telemetry can use the same canonical representation.
+10. Model outputs remain separate from observations.
+11. Decisions remain separate from model predictions.
+12. The entire pipeline can be reproduced from the original source data.
+
+---
+
+# 51. Final Architecture
+
+The resulting data architecture is:
+
+```text
+                       RAW DATA
+                          │
+             ┌────────────┴────────────┐
+             │                         │
+        ADFA-WD .GHC              Future EDR
+             │                     telemetry
+             ▼                         │
+      ADFA-WD Adapter             EDR Adapter
+             │                         │
+             └────────────┬────────────┘
+                          ▼
+                  CANONICAL DATA
+                          │
+                          ▼
+                  SEQUENCE / EVENT
+                       WINDOWS
+                          │
+                          ▼
+                  FEATURE ENGINE
+                          │
+                          ▼
+                     ML MODEL
+                          │
+                          ▼
+                  MODEL OUTPUT
+                          │
+                          ▼
+                  DECISION ENGINE
+                          │
+             ┌────────────┴────────────┐
+             ▼                         ▼
+          RECORD                   INVESTIGATE
+```
+
+The governing rule remains:
+
+> **Raw telemetry is immutable evidence. Source adapters interpret it. Canonical data standardizes it. Features transform it. Models predict from it. Policies make decisions from predictions.**
+
+---
+
+# 52. Immediate Implementation Target
+
+The next implementation sequence is now fixed:
+
+```text
+EVENT-SCHEMA.md
+      │
+      ▼
+DATASET.md
+      │
+      ▼
+ADFA-WD parser
+      │
+      ▼
+raw → parsed traces
+      │
+      ▼
+dataset statistics
+      │
+      ▼
+canonical representation
+      │
+      ▼
+feature pipeline
+      │
+      ▼
+baseline model
+```
+
+No neural architecture should be finalized before the baseline and dataset statistics have been established.
